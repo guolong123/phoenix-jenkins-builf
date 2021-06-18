@@ -1,8 +1,8 @@
 pipeline {
     agent { label 'cs88' }
-    triggers {
-        pollSCM 'H/10 * * * *'  // 轮询git触发
-    }
+//     triggers {
+//         pollSCM 'H/10 * * * *'  // 轮询git触发
+//     }
 
     options {
         buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '14', numToKeepStr: '30')
@@ -14,12 +14,12 @@ pipeline {
         string defaultValue: 'master', description: 'pv库基础分支', name: 'PV_BRANCH', trim: false
         string defaultValue: '', description: 'pv库pr号，多个pr使用空格分割', name: 'PV_PR', trim: false
         string defaultValue: '0.0.1', description: '版本号', name: 'VERSION', trim: false
-        booleanParam defaultValue: true, description: '是否生成docker镜像', name: 'CREATE_DOCKER_IMAGE'
+        choice choices: ['pr_number', 'version'], description: '镜像tag使用version还是pr号', name: 'IMAGE_TAG'
     }
 
     environment {
         PV_DIR='pandora-visualization'
-        PHOENIX_DIR='phoenix'
+        PHOENIX_DIR='phoenix-pandora'
     }
 
 
@@ -30,17 +30,20 @@ pipeline {
                 stage('pv clone and merge'){
                     steps{
                         dir("${env.PV_DIR}"){
-                            checkout([$class: 'GitSCM', branches: [[name: '*/${env.PV_BRANCH}']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '71382492-af44-4193-8192-eb846fd45f86', url: 'git@github.com:qbox/pandora-visualization.git']]])
-                            sh label: 'merge pv pr: ${env.PV_PR} to ${PV_BRANCH}', script: 'bash script/merge_pr ${PV_BRANCH} ${env.PV_PR}'
+                            checkout([$class: 'GitSCM', branches: [[name: "*/${env.PV_BRANCH}"]], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '71382492-af44-4193-8192-eb846fd45f86', url: 'git@github.com:qbox/pandora-visualization.git']]])
+                            sshagent(['71382492-af44-4193-8192-eb846fd45f86']) {
+                                sh label: "merge pv pr: ${env.PV_PR} to ${PV_BRANCH}", script: "bash ${env.WORKSPACE}/phoenix/script/merge_pr.sh ${PV_BRANCH} ${env.PV_PR}"
+                            }
                         }
-
                     }
                 }
                 stage('phoenix clone and merge'){
                     steps{
                         dir("${env.PHOENIX_DIR}"){
-                            checkout([$class: 'GitSCM', branches: [[name: '*/${env.PHOENIX_BRANCH}']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '71382492-af44-4193-8192-eb846fd45f86', url: 'git@github.com:qbox/phoenix.git']]])
-                            sh label: 'merge phoenix pr: ${env.PHOENIX_PR} to ${env.PHOENIX_BRANCH}', script: 'bash script/merge_pr ${env.PHOENIX_BRANCH} ${env.PHOENIX_PR}'
+                            checkout([$class: 'GitSCM', branches: [[name: "*/${env.PHOENIX_BRANCH}"]], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '71382492-af44-4193-8192-eb846fd45f86', url: 'git@github.com:qbox/phoenix.git']]])
+                            sshagent(['71382492-af44-4193-8192-eb846fd45f86']) {
+                                sh label: "merge phoenix pr: ${env.PHOENIX_PR} to ${env.PHOENIX_BRANCH}", script: "bash ${env.WORKSPACE}/phoenix/script/merge_pr.sh ${env.PHOENIX_BRANCH} ${env.PHOENIX_PR}"
+                            }
                         }
                     }
                 }
@@ -56,7 +59,9 @@ pipeline {
                         }
                     }
                     steps{
-                        sh label: 'phoenix building...', script: 'bash build4Jenkins.sh'
+                        dir("$PHOENIX_DIR"){
+                            sh label: 'phoenix building...', script: "bash ${env.WORKSPACE}/phoenix/script/build4Jenkins.sh"
+                        }
                     }
                 }
 //                 stage('search-editor-build'){
@@ -80,8 +85,10 @@ pipeline {
                         }
                     }
                     steps{
-                        dir("pv"){
-                            sh label: 'search-editor building...', script: 'bash ../search-editor/build.sh'
+                        dir("$PV_DIR"){
+                            sh label: 'pv yarn install...', script: 'yarn install'
+                            sh label: 'pv yarn build...', script: 'yarn build'
+                            sh label: 'pv yarn link...', script: 'yarn link'
                         }
                     }
                 }
@@ -95,15 +102,17 @@ pipeline {
                 }
             }
             steps{
-                dir("webapp"){
-                    sh label: 'webapp building...', script: "bash build.sh ${env.WORKSPACE}/pv"
+                dir("$PHOENIX_DIR/webapp"){
+                    sh label: 'webapp building...', script: "bash ${env.WORKSPACE}/phoenix/script/webappBuild.sh ${env.WORKSPACE}/${env.PV_DIR}"
                 }
             }
         }
         stage('package'){
             steps{
-                sh label: '将构建的前后端进行合并打包', script: 'bash publish4Jenkins.sh'
-                archiveArtifacts artifacts: 'distribution/release/**/*.tar.gz', followSymlinks: false
+                dir("$PHOENIX_DIR"){
+                    sh label: '将构建的前后端进行合并打包', script: "bash ${env.WORKSPACE}/phoenix/script/publish4Jenkins.sh"
+                    archiveArtifacts artifacts: "distribution/release/pandora-express/lib/*.tar.gz", followSymlinks: false
+                }
             }
         }
     }

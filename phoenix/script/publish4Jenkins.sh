@@ -38,6 +38,12 @@ mvPhoenixToRelease() {
 
   echo -e "\nMove phoenix to release path\n"
   cd ${ES_DIST_DIR}
+  if [[ ! -d ${ES_DIST_DIR} ]];then
+    mkdir -p ${ES_DIST_DIR}
+  fi
+  if [[ ! -d ${PANDORA_EXPRESS_DIR} ]];then
+    mkdir -p ${PANDORA_EXPRESS_DIR}
+  fi
   rm -rf ${PANDORA_FOLDER_NAME}/*
   mv ${ES_FOLDER_NAME} ${PANDORA_FOLDER_NAME}
   echo mv ${ES_DIST_DIR}/${PANDORA_FOLDER_NAME} ${PANDORA_EXPRESS_DIR}/lib
@@ -50,6 +56,7 @@ mvPhoenixToRelease() {
 }
 
 cpFrontendToRelease() {
+  cd $project
   rm -rf ${PANDORA_ROOT_DIR}/webapp
   mkdir -p ${PANDORA_ROOT_DIR}/webapp
   cp -r ${project}/webapp/build/* ${PANDORA_ROOT_DIR}/webapp/
@@ -108,21 +115,23 @@ genSelfCheckByDir() {
 
 packageRelease(){
   cd ${PANDORA_EXPRESS_DIR}/lib
-  tar -zcvf "pandora-phoenix-${VERSION}.tar.gz" "./pandora"
+  tar -zcvf "pandora-phoenix-${VERSION}.tar.gz" "${PANDORA_FOLDER_NAME}"
 }
 
 pushDockerImage2Registry(){
   cd $PROJECT_ROOT
-  docker build --rm -t "aslan-spock-register.qiniu.io/pandora/pandora2.0-express:${VERSION}" -f distribution/docker/phoenix/Dockerfile "distribution"
+
+  docker build --rm -t "aslan-spock-register.qiniu.io/pandora/pandora2.0-express:${VERSION}" -f \
+  distribution/docker/phoenix/Dockerfile "distribution"
   docker push "aslan-spock-register.qiniu.io/pandora/pandora2.0-express:${VERSION}"
 }
 
 package(){
   renameBuildResult
 
-  mvPhoenixToRelease
-
   cpFrontendToRelease
+
+  mvPhoenixToRelease
 
   genSelfCheckManifest
 
