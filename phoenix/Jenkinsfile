@@ -1,0 +1,115 @@
+pipeline {
+    agent { label 'cs88' }
+    triggers {
+        pollSCM 'H/10 * * * *'  // 轮询git触发
+    }
+
+    options {
+        buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '14', numToKeepStr: '30')
+    }
+
+    parameters {
+        string defaultValue: 'develop', description: 'phoenix库基础分支', name: 'PHOENIX_BRANCH', trim: false
+        string defaultValue: '', description: 'phoenix库pr号，多个pr使用空格分割', name: 'PHOENIX_PR', trim: false
+        string defaultValue: 'master', description: 'pv库基础分支', name: 'PV_BRANCH', trim: false
+        string defaultValue: '', description: 'pv库pr号，多个pr使用空格分割', name: 'PV_PR', trim: false
+        string defaultValue: '0.0.1', description: '版本号', name: 'VERSION', trim: false
+        booleanParam defaultValue: true, description: '是否生成docker镜像', name: 'CREATE_DOCKER_IMAGE'
+    }
+
+    environment {
+        PV_DIR='pandora-visualization'
+        PHOENIX_DIR='phoenix'
+    }
+
+
+    stages {
+
+        stage('clone and merge'){
+            parallel{
+                stage('pv clone and merge'){
+                    steps{
+                        dir("${env.PV_DIR}"){
+                            checkout([$class: 'GitSCM', branches: [[name: '*/${env.PV_BRANCH}']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '71382492-af44-4193-8192-eb846fd45f86', url: 'git@github.com:qbox/pandora-visualization.git']]])
+                            sh label: 'merge pv pr: ${env.PV_PR} to ${PV_BRANCH}', script: 'bash script/merge_pr ${PV_BRANCH} ${env.PV_PR}'
+                        }
+
+                    }
+                }
+                stage('phoenix clone and merge'){
+                    steps{
+                        dir("${env.PHOENIX_DIR}"){
+                            checkout([$class: 'GitSCM', branches: [[name: '*/${env.PHOENIX_BRANCH}']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '71382492-af44-4193-8192-eb846fd45f86', url: 'git@github.com:qbox/phoenix.git']]])
+                            sh label: 'merge phoenix pr: ${env.PHOENIX_PR} to ${env.PHOENIX_BRANCH}', script: 'bash script/merge_pr ${env.PHOENIX_BRANCH} ${env.PHOENIX_PR}'
+                        }
+                    }
+                }
+            }
+        }
+        stage('build'){
+            parallel{
+                stage('phoenix-build'){
+                    agent {
+                        docker {
+                            image 'openjdk:11.0.5'
+                            reuseNode true
+                        }
+                    }
+                    steps{
+                        sh label: 'phoenix building...', script: 'bash build4Jenkins.sh'
+                    }
+                }
+//                 stage('search-editor-build'){
+//                     agent {
+//                         docker {
+//                             image 'node:12.20.1'
+//                             reuseNode true
+//                         }
+//                     }
+//                     steps{
+//                         dir("search-editor"){
+//                             sh label: 'search-editor building...', script: 'bash build.sh'
+//                         }
+//                     }
+//                 }
+                stage('pv-build'){
+                    agent {
+                        docker {
+                            image 'node:12.20.1'
+                            reuseNode true
+                        }
+                    }
+                    steps{
+                        dir("pv"){
+                            sh label: 'search-editor building...', script: 'bash ../search-editor/build.sh'
+                        }
+                    }
+                }
+            }
+        }
+        stage('webapp-build'){
+            agent {
+                docker {
+                    image 'node:12.20.1'
+                    reuseNode true
+                }
+            }
+            steps{
+                dir("webapp"){
+                    sh label: 'webapp building...', script: "bash build.sh ${env.WORKSPACE}/pv"
+                }
+            }
+        }
+        stage('package'){
+            steps{
+                sh label: '将构建的前后端进行合并打包', script: 'bash publish4Jenkins.sh'
+                archiveArtifacts artifacts: 'distribution/release/**/*.tar.gz', followSymlinks: false
+            }
+        }
+    }
+    post {
+        always {
+            echo "end"
+        }
+    }
+}
